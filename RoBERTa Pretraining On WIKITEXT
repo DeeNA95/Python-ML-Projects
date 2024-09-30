@@ -1,1 +1,786 @@
-{"metadata":{"kernelspec":{"language":"python","display_name":"Python 3","name":"python3"},"language_info":{"name":"python","version":"3.10.14","mimetype":"text/x-python","codemirror_mode":{"name":"ipython","version":3},"pygments_lexer":"ipython3","nbconvert_exporter":"python","file_extension":".py"},"kaggle":{"accelerator":"gpu","dataSources":[{"sourceId":1408148,"sourceType":"datasetVersion","datasetId":823358}],"dockerImageVersionId":30776,"isInternetEnabled":true,"language":"python","sourceType":"notebook","isGpuEnabled":true}},"nbformat_minor":4,"nbformat":4,"cells":[{"cell_type":"code","source":"# This Python 3 environment comes with many helpful analytics libraries installed\n# It is defined by the kaggle/python Docker image: https://github.com/kaggle/docker-python\n# For example, here's several helpful packages to load\n\nimport numpy as np # linear algebra\nimport pandas as pd # data processing, CSV file I/O (e.g. pd.read_csv)\n\n# Input data files are available in the read-only \"../input/\" directory\n# For example, running this (by clicking run or pressing Shift+Enter) will list all files under the input directory\n\nimport os\nfor dirname, _, filenames in os.walk('/kaggle/input'):\n    for filename in filenames:\n        print(os.path.join(dirname, filename))\n\n# You can write up to 20GB to the current directory (/kaggle/working/) that gets preserved as output when you create a version using \"Save & Run All\" \n# You can also write temporary files to /kaggle/temp/, but they won't be saved outside of the current session","metadata":{"_uuid":"8f2839f25d086af736a60e9eeb907d3b93b6e0e5","_cell_guid":"b1076dfc-b9ad-4769-8c92-a6c4dae69d19","execution":{"iopub.status.busy":"2024-09-29T17:28:39.548912Z","iopub.execute_input":"2024-09-29T17:28:39.549734Z","iopub.status.idle":"2024-09-29T17:28:40.649939Z","shell.execute_reply.started":"2024-09-29T17:28:39.549689Z","shell.execute_reply":"2024-09-29T17:28:40.648866Z"},"trusted":true},"execution_count":null,"outputs":[]},{"cell_type":"code","source":"import torch\nimport os \nfrom tokenizers import ByteLevelBPETokenizer\nimport pandas as pd","metadata":{"execution":{"iopub.status.busy":"2024-09-29T21:28:00.331572Z","iopub.execute_input":"2024-09-29T21:28:00.332288Z","iopub.status.idle":"2024-09-29T21:28:00.337010Z","shell.execute_reply.started":"2024-09-29T21:28:00.332246Z","shell.execute_reply":"2024-09-29T21:28:00.336075Z"},"trusted":true},"execution_count":null,"outputs":[]},{"cell_type":"code","source":"%%time\n\nfrom pathlib import Path\nfrom tokenizers import ByteLevelBPETokenizer\nimport os\n\n# Initialize the tokenizer\ntokenizer = ByteLevelBPETokenizer()\n\n# Train the tokenizer on the dataset\ntokenizer.train(\n    \"/kaggle/input/wikitext/wikitext-103-raw/wiki.train.raw\", \n    vocab_size=52_000, \n    min_frequency=2, \n    special_tokens=[\n        \"<s>\",    # Start of sentence\n        \"<pad>\",  # Padding token\n        \"</s>\",   # End of sentence\n        \"<unk>\",  # Unknown token\n        \"<mask>\", # Mask token\n        \"=\",      # Single equal sign\n        \"==\",     # Double equal sign\n        \"'''\",    # Bold\n        \"''\",     # Italics\n        \"[[\",     # Start of a link\n        \"]]\",     # End of a link\n        \"<ref>\",  # Reference tag\n        \"{{\",     # Start of a template\n        \"}}\",     # End of a template\n        \"<!--\",    # Start of a comment\n        \"-->\"     # End of a comment\n    ]\n)\n\n# Save the tokenizer to disk\nmodel_dir = '/kaggle/working/model'\nos.makedirs(model_dir, exist_ok=True)\ntokenizer.save_model(model_dir)\n","metadata":{"execution":{"iopub.status.busy":"2024-09-29T17:28:45.549628Z","iopub.execute_input":"2024-09-29T17:28:45.550241Z","iopub.status.idle":"2024-09-29T17:30:38.975157Z","shell.execute_reply.started":"2024-09-29T17:28:45.550195Z","shell.execute_reply":"2024-09-29T17:30:38.973543Z"},"trusted":true},"execution_count":null,"outputs":[]},{"cell_type":"code","source":"from tokenizers.implementations import ByteLevelBPETokenizer\nfrom tokenizers.processors import BertProcessing\n\ntokenizer = ByteLevelBPETokenizer(\n    '/kaggle/working/model/vocab.json',\n    '/kaggle/working/model/merges.txt'\n)\n\ntokenizer._tokenizer.post_processor = BertProcessing(\n    ('<s>', tokenizer.token_to_id('<s>')),  # start of sequence token\n    ('</s>', tokenizer.token_to_id('</s>'))  # end of sequence token\n)\ntokenizer.enable_truncation(max_length=512)\n\nprint(tokenizer.encode('Wikitext encoder training').tokens)\nprint(tokenizer.encode('Wikitext encoder training'))","metadata":{"execution":{"iopub.status.busy":"2024-09-29T21:57:59.282452Z","iopub.execute_input":"2024-09-29T21:57:59.283352Z","iopub.status.idle":"2024-09-29T21:57:59.549114Z","shell.execute_reply.started":"2024-09-29T21:57:59.283309Z","shell.execute_reply":"2024-09-29T21:57:59.548130Z"},"trusted":true},"execution_count":null,"outputs":[]},{"cell_type":"code","source":"! head /kaggle/working/model/merges.txt","metadata":{"execution":{"iopub.status.busy":"2024-09-29T21:59:54.002412Z","iopub.execute_input":"2024-09-29T21:59:54.002821Z","iopub.status.idle":"2024-09-29T21:59:55.116516Z","shell.execute_reply.started":"2024-09-29T21:59:54.002785Z","shell.execute_reply":"2024-09-29T21:59:55.115296Z"},"trusted":true},"execution_count":null,"outputs":[]},{"cell_type":"code","source":"from transformers import RobertaConfig, RobertaTokenizer\n\nconfig = RobertaConfig(\n    vocab_size=52000,\n    max_position_embeddings = 512,\n    num_attention_heads = 12,\n    num_hidden_layers=6,\n    type_vocab_size=1\n)\n\ntokenizer = RobertaTokenizer.from_pretrained('/kaggle/working/model/', max_length=512, clean_up_tokenization_spaces=True)","metadata":{"execution":{"iopub.status.busy":"2024-09-29T21:31:16.460315Z","iopub.execute_input":"2024-09-29T21:31:16.461238Z","iopub.status.idle":"2024-09-29T21:31:16.607138Z","shell.execute_reply.started":"2024-09-29T21:31:16.461194Z","shell.execute_reply":"2024-09-29T21:31:16.605780Z"},"trusted":true},"execution_count":null,"outputs":[]},{"cell_type":"code","source":"from transformers import RobertaForMaskedLM\n\nmodel = RobertaForMaskedLM(config=config).to('cuda')\nprint(model.num_parameters())","metadata":{"execution":{"iopub.status.busy":"2024-09-29T17:40:26.646194Z","iopub.execute_input":"2024-09-29T17:40:26.646571Z","iopub.status.idle":"2024-09-29T17:40:29.928587Z","shell.execute_reply.started":"2024-09-29T17:40:26.646537Z","shell.execute_reply":"2024-09-29T17:40:29.927639Z"},"trusted":true},"execution_count":null,"outputs":[]},{"cell_type":"code","source":"from transformers import LineByLineTextDataset, DataCollatorForLanguageModeling\n\ndataset = LineByLineTextDataset(\n    tokenizer=tokenizer,\n    file_path='/kaggle/input/wikitext/wikitext-103-raw/wiki.train.raw',\n    block_size=128\n)\n\ndata_collator = DataCollatorForLanguageModeling(\n    tokenizer=tokenizer, mlm=True, mlm_probability=.2\n)\n\n","metadata":{"execution":{"iopub.status.busy":"2024-09-29T21:45:53.988746Z","iopub.status.idle":"2024-09-29T21:45:53.989153Z","shell.execute_reply.started":"2024-09-29T21:45:53.988937Z","shell.execute_reply":"2024-09-29T21:45:53.988955Z"},"trusted":true},"execution_count":null,"outputs":[]},{"cell_type":"code","source":"# Check dataset size\nprint(f\"Dataset size: {len(dataset)}\")\nprint(next(iter(dataset)))\n","metadata":{"execution":{"iopub.status.busy":"2024-09-29T21:26:55.420117Z","iopub.execute_input":"2024-09-29T21:26:55.420857Z","iopub.status.idle":"2024-09-29T21:26:55.475377Z","shell.execute_reply.started":"2024-09-29T21:26:55.420816Z","shell.execute_reply":"2024-09-29T21:26:55.474250Z"},"trusted":true},"execution_count":null,"outputs":[]},{"cell_type":"code","source":"%%time\nfrom transformers import Trainer, TrainingArguments\n\nt_args = TrainingArguments(\n    output_dir = '/kaggle/working/model',\n    overwrite_output_dir = True,\n    learning_rate=2e-5,\n    num_train_epochs=1, #just one for a short train time\n    per_device_train_batch_size=64,\n    save_steps=10000,\n    save_total_limit=5,\n    report_to=[]\n)\n\ntrainer = Trainer(\n    model=model,\n    args=t_args,\n    data_collator=data_collator,\n    train_dataset=dataset\n)\n\ntrainer.train()\ntrainer.save_model('/kaggle/working/model')","metadata":{"execution":{"iopub.status.busy":"2024-09-29T18:01:18.468717Z","iopub.execute_input":"2024-09-29T18:01:18.469109Z","iopub.status.idle":"2024-09-29T21:24:25.491043Z","shell.execute_reply.started":"2024-09-29T18:01:18.469072Z","shell.execute_reply":"2024-09-29T21:24:25.490055Z"},"collapsed":true,"jupyter":{"outputs_hidden":true},"trusted":true},"execution_count":null,"outputs":[]},{"cell_type":"code","source":"from transformers import pipeline\n\nmodel_path = '/kaggle/working/model/checkpoint-18204'  \nmodel = RobertaForMaskedLM.from_pretrained(model_path).to('cuda')\ntokenizer = RobertaTokenizer.from_pretrained('/kaggle/working/model')\n\nfill_mask = pipeline(\n    'fill-mask',\n    model=model,\n    tokenizer=tokenizer,\n    device='cuda'\n)\n\nfill_mask(\"Valkyrie is a <mask> game. Playing it is enjoyable\")","metadata":{"execution":{"iopub.status.busy":"2024-09-29T21:47:22.678895Z","iopub.execute_input":"2024-09-29T21:47:22.679795Z","iopub.status.idle":"2024-09-29T21:47:23.332656Z","shell.execute_reply.started":"2024-09-29T21:47:22.679752Z","shell.execute_reply":"2024-09-29T21:47:23.331645Z"},"trusted":true},"execution_count":null,"outputs":[]}]}
+{
+ "cells": [
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "f3ba0431",
+   "metadata": {
+    "_cell_guid": "b1076dfc-b9ad-4769-8c92-a6c4dae69d19",
+    "_uuid": "8f2839f25d086af736a60e9eeb907d3b93b6e0e5",
+    "execution": {
+     "iopub.execute_input": "2024-09-29T23:24:08.933991Z",
+     "iopub.status.busy": "2024-09-29T23:24:08.933654Z",
+     "iopub.status.idle": "2024-09-29T23:24:09.675177Z",
+     "shell.execute_reply": "2024-09-29T23:24:09.673937Z"
+    },
+    "papermill": {
+     "duration": 0.74922,
+     "end_time": "2024-09-29T23:24:09.677322",
+     "exception": false,
+     "start_time": "2024-09-29T23:24:08.928102",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "/kaggle/input/wikitext/wikitext-2-raw/wiki.test.raw\n",
+      "/kaggle/input/wikitext/wikitext-2-raw/wiki.train.raw\n",
+      "/kaggle/input/wikitext/wikitext-2-raw/wiki.valid.raw\n",
+      "/kaggle/input/wikitext/wikitext-2/wiki.train.tokens\n",
+      "/kaggle/input/wikitext/wikitext-2/wiki.valid.tokens\n",
+      "/kaggle/input/wikitext/wikitext-2/wiki.test.tokens\n",
+      "/kaggle/input/wikitext/wikitext-103/wiki.train.tokens\n",
+      "/kaggle/input/wikitext/wikitext-103/wiki.valid.tokens\n",
+      "/kaggle/input/wikitext/wikitext-103/wiki.test.tokens\n",
+      "/kaggle/input/wikitext/wikitext-103-raw/wiki.test.raw\n",
+      "/kaggle/input/wikitext/wikitext-103-raw/wiki.train.raw\n",
+      "/kaggle/input/wikitext/wikitext-103-raw/wiki.valid.raw\n"
+     ]
+    }
+   ],
+   "source": [
+    "# This Python 3 environment comes with many helpful analytics libraries installed\n",
+    "# It is defined by the kaggle/python Docker image: https://github.com/kaggle/docker-python\n",
+    "# For example, here's several helpful packages to load\n",
+    "\n",
+    "import numpy as np # linear algebra\n",
+    "import pandas as pd # data processing, CSV file I/O (e.g. pd.read_csv)\n",
+    "\n",
+    "# Input data files are available in the read-only \"../input/\" directory\n",
+    "# For example, running this (by clicking run or pressing Shift+Enter) will list all files under the input directory\n",
+    "\n",
+    "import os\n",
+    "for dirname, _, filenames in os.walk('/kaggle/input'):\n",
+    "    for filename in filenames:\n",
+    "        print(os.path.join(dirname, filename))\n",
+    "\n",
+    "# You can write up to 20GB to the current directory (/kaggle/working/) that gets preserved as output when you create a version using \"Save & Run All\" \n",
+    "# You can also write temporary files to /kaggle/temp/, but they won't be saved outside of the current session"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 2,
+   "id": "fae871ce",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-09-29T23:24:09.686738Z",
+     "iopub.status.busy": "2024-09-29T23:24:09.686322Z",
+     "iopub.status.idle": "2024-09-29T23:24:12.927501Z",
+     "shell.execute_reply": "2024-09-29T23:24:12.926684Z"
+    },
+    "papermill": {
+     "duration": 3.248343,
+     "end_time": "2024-09-29T23:24:12.929839",
+     "exception": false,
+     "start_time": "2024-09-29T23:24:09.681496",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [],
+   "source": [
+    "import torch\n",
+    "import os \n",
+    "from tokenizers import ByteLevelBPETokenizer\n",
+    "import pandas as pd"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 3,
+   "id": "395db6f1",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-09-29T23:24:12.939461Z",
+     "iopub.status.busy": "2024-09-29T23:24:12.939024Z",
+     "iopub.status.idle": "2024-09-29T23:25:50.167600Z",
+     "shell.execute_reply": "2024-09-29T23:25:50.166624Z"
+    },
+    "papermill": {
+     "duration": 97.235781,
+     "end_time": "2024-09-29T23:25:50.169798",
+     "exception": false,
+     "start_time": "2024-09-29T23:24:12.934017",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "\n",
+      "\n",
+      "\n",
+      "CPU times: user 5min 40s, sys: 4.15 s, total: 5min 44s\n",
+      "Wall time: 1min 37s\n"
+     ]
+    },
+    {
+     "data": {
+      "text/plain": [
+       "['/kaggle/working/model/vocab.json', '/kaggle/working/model/merges.txt']"
+      ]
+     },
+     "execution_count": 3,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "%%time\n",
+    "\n",
+    "from pathlib import Path\n",
+    "from tokenizers import ByteLevelBPETokenizer\n",
+    "import os\n",
+    "\n",
+    "# Initialize the tokenizer\n",
+    "tokenizer = ByteLevelBPETokenizer()\n",
+    "\n",
+    "# Train the tokenizer on the dataset\n",
+    "tokenizer.train(\n",
+    "    \"/kaggle/input/wikitext/wikitext-103-raw/wiki.train.raw\", \n",
+    "    vocab_size=52_000, \n",
+    "    min_frequency=2, \n",
+    "    special_tokens=[\n",
+    "        \"<s>\",    # Start of sentence\n",
+    "        \"<pad>\",  # Padding token\n",
+    "        \"</s>\",   # End of sentence\n",
+    "        \"<unk>\",  # Unknown token\n",
+    "        \"<mask>\", # Mask token\n",
+    "        \"=\",      # Single equal sign\n",
+    "        \"==\",     # Double equal sign\n",
+    "        \"'''\",    # Bold\n",
+    "        \"''\",     # Italics\n",
+    "        \"[[\",     # Start of a link\n",
+    "        \"]]\",     # End of a link\n",
+    "        \"<ref>\",  # Reference tag\n",
+    "        \"{{\",     # Start of a template\n",
+    "        \"}}\",     # End of a template\n",
+    "        \"<!--\",    # Start of a comment\n",
+    "        \"-->\"     # End of a comment\n",
+    "    ]\n",
+    ")\n",
+    "\n",
+    "# Save the tokenizer to disk\n",
+    "model_dir = '/kaggle/working/model'\n",
+    "os.makedirs(model_dir, exist_ok=True)\n",
+    "tokenizer.save_model(model_dir)\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 4,
+   "id": "00eeb91f",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-09-29T23:25:50.179823Z",
+     "iopub.status.busy": "2024-09-29T23:25:50.179515Z",
+     "iopub.status.idle": "2024-09-29T23:25:50.330203Z",
+     "shell.execute_reply": "2024-09-29T23:25:50.329247Z"
+    },
+    "papermill": {
+     "duration": 0.158245,
+     "end_time": "2024-09-29T23:25:50.332481",
+     "exception": false,
+     "start_time": "2024-09-29T23:25:50.174236",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "['</s>', 'W', 'ik', 'ite', 'xt', 'Ġenc', 'oder', 'Ġtraining', '<s>']\n",
+      "Encoding(num_tokens=9, attributes=[ids, type_ids, tokens, offsets, attention_mask, special_tokens_mask, overflowing])\n"
+     ]
+    }
+   ],
+   "source": [
+    "from tokenizers.implementations import ByteLevelBPETokenizer\n",
+    "from tokenizers.processors import BertProcessing\n",
+    "\n",
+    "tokenizer = ByteLevelBPETokenizer(\n",
+    "    '/kaggle/working/model/vocab.json',\n",
+    "    '/kaggle/working/model/merges.txt'\n",
+    ")\n",
+    "\n",
+    "tokenizer._tokenizer.post_processor = BertProcessing(\n",
+    "    ('<s>', tokenizer.token_to_id('<s>')),  # start of sequence token\n",
+    "    ('</s>', tokenizer.token_to_id('</s>'))  # end of sequence token\n",
+    ")\n",
+    "tokenizer.enable_truncation(max_length=512)\n",
+    "\n",
+    "print(tokenizer.encode('Wikitext encoder training').tokens)\n",
+    "print(tokenizer.encode('Wikitext encoder training'))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 5,
+   "id": "1b0c69e5",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-09-29T23:25:50.342776Z",
+     "iopub.status.busy": "2024-09-29T23:25:50.342456Z",
+     "iopub.status.idle": "2024-09-29T23:25:51.353690Z",
+     "shell.execute_reply": "2024-09-29T23:25:51.352737Z"
+    },
+    "papermill": {
+     "duration": 1.018705,
+     "end_time": "2024-09-29T23:25:51.355812",
+     "exception": false,
+     "start_time": "2024-09-29T23:25:50.337107",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stderr",
+     "output_type": "stream",
+     "text": [
+      "huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...\n",
+      "To disable this warning, you can either:\n",
+      "\t- Avoid using `tokenizers` before the fork if possible\n",
+      "\t- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)\n"
+     ]
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "#version: 0.2\r\n",
+      "Ġ t\r\n",
+      "h e\r\n",
+      "Ġ a\r\n",
+      "i n\r\n",
+      "Ġt he\r\n",
+      "e r\r\n",
+      "o n\r\n",
+      "Ġ ,\r\n",
+      "r e\r\n"
+     ]
+    }
+   ],
+   "source": [
+    "! head /kaggle/working/model/merges.txt"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 6,
+   "id": "0c2bf80e",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-09-29T23:25:51.367026Z",
+     "iopub.status.busy": "2024-09-29T23:25:51.366668Z",
+     "iopub.status.idle": "2024-09-29T23:25:52.478519Z",
+     "shell.execute_reply": "2024-09-29T23:25:52.477697Z"
+    },
+    "papermill": {
+     "duration": 1.120186,
+     "end_time": "2024-09-29T23:25:52.481047",
+     "exception": false,
+     "start_time": "2024-09-29T23:25:51.360861",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [],
+   "source": [
+    "from transformers import RobertaConfig, RobertaTokenizer\n",
+    "\n",
+    "config = RobertaConfig(\n",
+    "    vocab_size=52000,\n",
+    "    max_position_embeddings = 512,\n",
+    "    num_attention_heads = 12,\n",
+    "    num_hidden_layers=6,\n",
+    "    type_vocab_size=1\n",
+    ")\n",
+    "\n",
+    "tokenizer = RobertaTokenizer.from_pretrained('/kaggle/working/model/', max_length=512, clean_up_tokenization_spaces=True)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 7,
+   "id": "e519db39",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-09-29T23:25:52.492556Z",
+     "iopub.status.busy": "2024-09-29T23:25:52.492268Z",
+     "iopub.status.idle": "2024-09-29T23:25:55.974096Z",
+     "shell.execute_reply": "2024-09-29T23:25:55.973152Z"
+    },
+    "papermill": {
+     "duration": 3.490388,
+     "end_time": "2024-09-29T23:25:55.976219",
+     "exception": false,
+     "start_time": "2024-09-29T23:25:52.485831",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "83502880\n"
+     ]
+    }
+   ],
+   "source": [
+    "from transformers import RobertaForMaskedLM\n",
+    "\n",
+    "model = RobertaForMaskedLM(config=config).to('cuda')\n",
+    "print(model.num_parameters())"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 8,
+   "id": "a500719a",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-09-29T23:25:55.988751Z",
+     "iopub.status.busy": "2024-09-29T23:25:55.988281Z",
+     "iopub.status.idle": "2024-09-29T23:43:10.314665Z",
+     "shell.execute_reply": "2024-09-29T23:43:10.313762Z"
+    },
+    "papermill": {
+     "duration": 1034.340556,
+     "end_time": "2024-09-29T23:43:10.321845",
+     "exception": false,
+     "start_time": "2024-09-29T23:25:55.981289",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stderr",
+     "output_type": "stream",
+     "text": [
+      "/opt/conda/lib/python3.10/site-packages/transformers/data/datasets/language_modeling.py:119: FutureWarning: This dataset will be removed from the library soon, preprocessing should be handled with the 🤗 Datasets library. You can have a look at this example script for pointers: https://github.com/huggingface/transformers/blob/main/examples/pytorch/language-modeling/run_mlm.py\n",
+      "  warnings.warn(\n"
+     ]
+    }
+   ],
+   "source": [
+    "from transformers import LineByLineTextDataset, DataCollatorForLanguageModeling\n",
+    "\n",
+    "dataset = LineByLineTextDataset(\n",
+    "    tokenizer=tokenizer,\n",
+    "    file_path='/kaggle/input/wikitext/wikitext-103-raw/wiki.train.raw',\n",
+    "    block_size=128\n",
+    ")\n",
+    "\n",
+    "data_collator = DataCollatorForLanguageModeling(\n",
+    "    tokenizer=tokenizer, mlm=True, mlm_probability=.2\n",
+    ")\n",
+    "\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 9,
+   "id": "2f538dac",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-09-29T23:43:10.381297Z",
+     "iopub.status.busy": "2024-09-29T23:43:10.380661Z",
+     "iopub.status.idle": "2024-09-29T23:43:10.389951Z",
+     "shell.execute_reply": "2024-09-29T23:43:10.388778Z"
+    },
+    "papermill": {
+     "duration": 0.064818,
+     "end_time": "2024-09-29T23:43:10.391992",
+     "exception": false,
+     "start_time": "2024-09-29T23:43:10.327174",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Dataset size: 1165029\n",
+      "{'input_ids': tensor([    0,   316, 37944,  3451, 20486,  3574,   316,   235,     2])}\n"
+     ]
+    }
+   ],
+   "source": [
+    "# Check dataset size\n",
+    "print(f\"Dataset size: {len(dataset)}\")\n",
+    "print(next(iter(dataset)))\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 10,
+   "id": "87f1ca61",
+   "metadata": {
+    "collapsed": true,
+    "execution": {
+     "iopub.execute_input": "2024-09-29T23:43:10.402865Z",
+     "iopub.status.busy": "2024-09-29T23:43:10.402581Z",
+     "iopub.status.idle": "2024-09-30T03:06:21.498847Z",
+     "shell.execute_reply": "2024-09-30T03:06:21.497850Z"
+    },
+    "jupyter": {
+     "outputs_hidden": true
+    },
+    "papermill": {
+     "duration": 12191.104376,
+     "end_time": "2024-09-30T03:06:21.501240",
+     "exception": false,
+     "start_time": "2024-09-29T23:43:10.396864",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "\n",
+       "    <div>\n",
+       "      \n",
+       "      <progress value='18204' max='18204' style='width:300px; height:20px; vertical-align: middle;'></progress>\n",
+       "      [18204/18204 3:23:05, Epoch 1/1]\n",
+       "    </div>\n",
+       "    <table border=\"1\" class=\"dataframe\">\n",
+       "  <thead>\n",
+       " <tr style=\"text-align: left;\">\n",
+       "      <th>Step</th>\n",
+       "      <th>Training Loss</th>\n",
+       "    </tr>\n",
+       "  </thead>\n",
+       "  <tbody>\n",
+       "    <tr>\n",
+       "      <td>500</td>\n",
+       "      <td>7.888100</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>1000</td>\n",
+       "      <td>7.162600</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>1500</td>\n",
+       "      <td>7.031600</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>2000</td>\n",
+       "      <td>6.944000</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>2500</td>\n",
+       "      <td>6.888300</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>3000</td>\n",
+       "      <td>6.841300</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>3500</td>\n",
+       "      <td>6.797700</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>4000</td>\n",
+       "      <td>6.756500</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>4500</td>\n",
+       "      <td>6.718300</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>5000</td>\n",
+       "      <td>6.689500</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>5500</td>\n",
+       "      <td>6.655900</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>6000</td>\n",
+       "      <td>6.617800</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>6500</td>\n",
+       "      <td>6.594500</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>7000</td>\n",
+       "      <td>6.559300</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>7500</td>\n",
+       "      <td>6.536600</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>8000</td>\n",
+       "      <td>6.518700</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>8500</td>\n",
+       "      <td>6.513100</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>9000</td>\n",
+       "      <td>6.484700</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>9500</td>\n",
+       "      <td>6.468000</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>10000</td>\n",
+       "      <td>6.452700</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>10500</td>\n",
+       "      <td>6.424300</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>11000</td>\n",
+       "      <td>6.420600</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>11500</td>\n",
+       "      <td>6.411800</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>12000</td>\n",
+       "      <td>6.388400</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>12500</td>\n",
+       "      <td>6.374000</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>13000</td>\n",
+       "      <td>6.375600</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>13500</td>\n",
+       "      <td>6.354900</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>14000</td>\n",
+       "      <td>6.352100</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>14500</td>\n",
+       "      <td>6.338200</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>15000</td>\n",
+       "      <td>6.328500</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>15500</td>\n",
+       "      <td>6.320800</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>16000</td>\n",
+       "      <td>6.326800</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>16500</td>\n",
+       "      <td>6.311800</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>17000</td>\n",
+       "      <td>6.308400</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>17500</td>\n",
+       "      <td>6.306900</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <td>18000</td>\n",
+       "      <td>6.304000</td>\n",
+       "    </tr>\n",
+       "  </tbody>\n",
+       "</table><p>"
+      ],
+      "text/plain": [
+       "<IPython.core.display.HTML object>"
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "CPU times: user 3h 23min 6s, sys: 13 s, total: 3h 23min 19s\n",
+      "Wall time: 3h 23min 11s\n"
+     ]
+    }
+   ],
+   "source": [
+    "%%time\n",
+    "from transformers import Trainer, TrainingArguments\n",
+    "\n",
+    "t_args = TrainingArguments(\n",
+    "    output_dir = '/kaggle/working/model',\n",
+    "    overwrite_output_dir = True,\n",
+    "    learning_rate=2e-5,\n",
+    "    num_train_epochs=1, #just one for a short train time\n",
+    "    per_device_train_batch_size=64,\n",
+    "    save_steps=10000,\n",
+    "    save_total_limit=5,\n",
+    "    report_to=[]\n",
+    ")\n",
+    "\n",
+    "trainer = Trainer(\n",
+    "    model=model,\n",
+    "    args=t_args,\n",
+    "    data_collator=data_collator,\n",
+    "    train_dataset=dataset\n",
+    ")\n",
+    "\n",
+    "trainer.train()\n",
+    "trainer.save_model('/kaggle/working/model')"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 11,
+   "id": "c7c532fb",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-09-30T03:06:21.513784Z",
+     "iopub.status.busy": "2024-09-30T03:06:21.512860Z",
+     "iopub.status.idle": "2024-09-30T03:06:22.520064Z",
+     "shell.execute_reply": "2024-09-30T03:06:22.519210Z"
+    },
+    "papermill": {
+     "duration": 1.015258,
+     "end_time": "2024-09-30T03:06:22.521865",
+     "exception": false,
+     "start_time": "2024-09-30T03:06:21.506607",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stderr",
+     "output_type": "stream",
+     "text": [
+      "/opt/conda/lib/python3.10/site-packages/transformers/tokenization_utils_base.py:1601: FutureWarning: `clean_up_tokenization_spaces` was not set. It will be set to `True` by default. This behavior will be depracted in transformers v4.45, and will be then set to `False` by default. For more details check this issue: https://github.com/huggingface/transformers/issues/31884\n",
+      "  warnings.warn(\n"
+     ]
+    },
+    {
+     "data": {
+      "text/plain": [
+       "[{'score': 0.03339013084769249,\n",
+       "  'token': 278,\n",
+       "  'token_str': ',',\n",
+       "  'sequence': 'Valkyrie is a, game. Playing it is enjoyable'},\n",
+       " {'score': 0.028288032859563828,\n",
+       "  'token': 296,\n",
+       "  'token_str': ' of',\n",
+       "  'sequence': 'Valkyrie is a of game. Playing it is enjoyable'},\n",
+       " {'score': 0.027253828942775726,\n",
+       "  'token': 755,\n",
+       "  'token_str': ' game',\n",
+       "  'sequence': 'Valkyrie is a game game. Playing it is enjoyable'},\n",
+       " {'score': 0.025380974635481834,\n",
+       "  'token': 391,\n",
+       "  'token_str': ' is',\n",
+       "  'sequence': 'Valkyrie is a is game. Playing it is enjoyable'},\n",
+       " {'score': 0.024545634165406227,\n",
+       "  'token': 298,\n",
+       "  'token_str': ' in',\n",
+       "  'sequence': 'Valkyrie is a in game. Playing it is enjoyable'}]"
+      ]
+     },
+     "execution_count": 11,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "from transformers import pipeline\n",
+    "\n",
+    "model_path = '/kaggle/working/model/checkpoint-18204'  \n",
+    "model = RobertaForMaskedLM.from_pretrained(model_path).to('cuda')\n",
+    "tokenizer = RobertaTokenizer.from_pretrained('/kaggle/working/model')\n",
+    "\n",
+    "fill_mask = pipeline(\n",
+    "    'fill-mask',\n",
+    "    model=model,\n",
+    "    tokenizer=tokenizer,\n",
+    "    device='cuda'\n",
+    ")\n",
+    "\n",
+    "fill_mask(\"Valkyrie is a <mask> game. Playing it is enjoyable\")"
+   ]
+  }
+ ],
+ "metadata": {
+  "kaggle": {
+   "accelerator": "gpu",
+   "dataSources": [
+    {
+     "datasetId": 823358,
+     "sourceId": 1408148,
+     "sourceType": "datasetVersion"
+    }
+   ],
+   "dockerImageVersionId": 30776,
+   "isGpuEnabled": true,
+   "isInternetEnabled": true,
+   "language": "python",
+   "sourceType": "notebook"
+  },
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.10.14"
+  },
+  "papermill": {
+   "default_parameters": {},
+   "duration": 13339.52597,
+   "end_time": "2024-09-30T03:06:25.772155",
+   "environment_variables": {},
+   "exception": null,
+   "input_path": "__notebook__.ipynb",
+   "output_path": "__notebook__.ipynb",
+   "parameters": {},
+   "start_time": "2024-09-29T23:24:06.246185",
+   "version": "2.6.0"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
